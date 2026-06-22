@@ -187,7 +187,7 @@ from langchain_anthropic import ChatAnthropic
 
 # Import your existing modules
 from medical_rag import load_medical_rag_store, build_medical_rag_store
-from cbt_chatbot import (
+from chatbot import (
     build_cbt_graph,
     CBTState,
     TECHNIQUE_STEPS,
@@ -205,7 +205,6 @@ from cbt_chatbot import (
 MODEL_OPTIONS = {
     "🟢 OpenAI — GPT-4o Mini":         ("openai",    "gpt-4o-mini"),
     "🟣 Anthropic — Claude Sonnet 4.5": ("anthropic", "claude-sonnet-4-5"),
-    "⚡ Anthropic — Claude Haiku 4.5":  ("anthropic", "claude-haiku-4-5-20251001"),
 }
 
 RETRIEVAL_OPTIONS = {
@@ -286,7 +285,7 @@ def load_or_build_rag(persist_path: str):
 @st.cache_resource(show_spinner=False)
 def get_graph(model_key: str, retrieval_strategy: str, persist_path: str):
     """Build and cache the LangGraph for the chosen model & strategy."""
-    import cbt_chatbot as cb
+    import chatbot as cb
     cb.RETRIEVAL_STRATEGY = retrieval_strategy
     cb.LLM = get_llm(model_key)
 
