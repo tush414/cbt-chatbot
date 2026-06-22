@@ -4,6 +4,7 @@ langchain-core>=0.2.0
 langchain-community>=0.2.0
 langchain-chroma
 langchain-openai>=0.1.0
+langchain-anthropic
 langchain-text-splitters>=0.2.0
 
 # LangGraph
