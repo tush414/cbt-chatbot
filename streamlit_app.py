@@ -3,8 +3,7 @@
 #                                                                #
 #  Features:                                                     #
 #  - RAG store build / load on startup                           #
-#  - Model selection: OpenAI (gpt-4o-mini) or Anthropic         #
-#    (claude-sonnet-4-5 / claude-haiku-4-5)                      #
+#  - Model selection: OpenAI models only                         #
 #  - Full multi-turn CBT chat with interactive technique steps   #
 #  - Sidebar: session summary, mood history, technique log       #
 #  - Satisfaction ratings per response                           #
@@ -183,7 +182,6 @@ hr { border-color: #2a3045; }
 from langchain_community.vectorstores import Chroma
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
-from langchain_anthropic import ChatAnthropic
 
 # Import your existing modules
 from medical_rag import load_medical_rag_store, build_medical_rag_store
@@ -200,11 +198,12 @@ from chatbot import (
 
 
 # ══════════════════════════════════════════════════════════════
-#  MODEL CONFIGURATION
+#  MODEL CONFIGURATION — OpenAI only
 # ══════════════════════════════════════════════════════════════
 MODEL_OPTIONS = {
-    "🟢 OpenAI — GPT-4o Mini":         ("openai",    "gpt-4o-mini"),
-    "🟣 Anthropic — Claude Sonnet 4.5": ("anthropic", "claude-sonnet-4-5"),
+    "🟢 GPT-4o Mini (fast)":    "gpt-4o-mini",
+    "🔵 GPT-4o (most capable)": "gpt-4o",
+    "⚡ GPT-3.5 Turbo (legacy)": "gpt-3.5-turbo",
 }
 
 RETRIEVAL_OPTIONS = {
@@ -232,7 +231,7 @@ MOOD_EMOJI = {
 # ══════════════════════════════════════════════════════════════
 def init_session():
     defaults = {
-        "chat_history":        [],      # list of {"role", "content"}
+        "chat_history":        [],
         "session_log":         [],
         "homework":            "None assigned yet",
         "session_number":      1,
@@ -248,7 +247,7 @@ def init_session():
         "mood_history":        [],
         "technique_history":   [],
         "show_welcome":        True,
-        "pending_rating":      False,   # waiting for user to rate last response
+        "pending_rating":      False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -256,15 +255,11 @@ def init_session():
 
 
 # ══════════════════════════════════════════════════════════════
-#  LLM FACTORY  — returns the right LLM based on model choice
+#  LLM FACTORY — OpenAI only
 # ══════════════════════════════════════════════════════════════
-def get_llm(model_key: str):
-    provider, model_id = MODEL_OPTIONS[model_key]
-    if provider == "openai":
-        return ChatOpenAI(model=model_id, temperature=0.4)
-    elif provider == "anthropic":
-        return ChatAnthropic(model=model_id, temperature=0.4, max_tokens=1024)
-    raise ValueError(f"Unknown provider: {provider}")
+def get_llm(model_key: str) -> ChatOpenAI:
+    model_id = MODEL_OPTIONS[model_key]
+    return ChatOpenAI(model=model_id, temperature=0.4)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -337,7 +332,6 @@ def run_chat_turn(user_message: str) -> str:
     st.session_state.active_step_index = final_state.get("active_step_index", 0)
     st.session_state.step_answers      = final_state.get("step_answers",      [])
 
-    # Track mood & technique history for sidebar
     detected_mood = final_state.get("mood", "neutral")
     if detected_mood:
         st.session_state.mood_history.append(detected_mood)
@@ -361,13 +355,14 @@ def render_sidebar():
         st.markdown("### ⚙️ Configuration")
 
         new_model = st.selectbox(
-            "LLM Model",
+            "OpenAI Model",
             options=list(MODEL_OPTIONS.keys()),
             index=list(MODEL_OPTIONS.keys()).index(st.session_state.selected_model_key),
-            help="OpenAI requires OPENAI_API_KEY; Anthropic requires ANTHROPIC_API_KEY",
+            help="All models require OPENAI_API_KEY",
         )
         if new_model != st.session_state.selected_model_key:
             st.session_state.selected_model_key = new_model
+            get_graph.clear()
             st.rerun()
 
         new_strategy = st.selectbox(
@@ -382,7 +377,10 @@ def render_sidebar():
         st.divider()
         st.markdown("### 📚 RAG Store")
 
-        rag_exists = os.path.exists(PERSIST_PATH) and bool(os.listdir(PERSIST_PATH)) if os.path.exists(PERSIST_PATH) else False
+        rag_exists = (
+            os.path.exists(PERSIST_PATH) and bool(os.listdir(PERSIST_PATH))
+            if os.path.exists(PERSIST_PATH) else False
+        )
 
         if rag_exists:
             st.success("✅ RAG store found", icon="✅")
@@ -445,7 +443,7 @@ def render_sidebar():
 
         # ── Active technique indicator ──────────────────────────
         if st.session_state.active_technique:
-            steps = TECHNIQUE_STEPS[st.session_state.active_technique]
+            steps   = TECHNIQUE_STEPS[st.session_state.active_technique]
             current = st.session_state.active_step_index
             name    = TECHNIQUE_DESCRIPTIONS.get(st.session_state.active_technique, st.session_state.active_technique)
             st.markdown(f"""
@@ -498,7 +496,6 @@ def main():
     if not st.session_state.rag_loaded:
         with st.spinner("🔄 Loading RAG knowledge stores…"):
             try:
-                # Trigger the cache to warm up
                 get_graph(
                     st.session_state.selected_model_key,
                     st.session_state.retrieval_strategy,
@@ -528,8 +525,6 @@ def main():
         with st.chat_message(msg["role"], avatar=avatar):
             st.markdown(msg["content"])
 
-            # Show satisfaction rating UI beneath the last assistant message
-            # only if there's no active technique step in progress
             is_last_assistant = (
                 msg["role"] == "assistant"
                 and i == len(st.session_state.chat_history) - 1
@@ -557,17 +552,14 @@ def main():
     )
 
     if user_input := st.chat_input(placeholder):
-        # Render user message immediately
         with st.chat_message("user", avatar="🧑"):
             st.markdown(user_input)
 
-        # Run pipeline
         with st.chat_message("assistant", avatar="🧠"):
             with st.spinner("Thinking…"):
                 response = run_chat_turn(user_input)
             st.markdown(response)
 
-            # Show rating if no active technique
             if not st.session_state.active_technique:
                 _render_rating_row(len(st.session_state.chat_history) - 1)
 
@@ -578,7 +570,6 @@ def main():
 #  SATISFACTION RATING ROW
 # ══════════════════════════════════════════════════════════════
 def _render_rating_row(msg_index: int):
-    """Render a compact 0–10 star / number rating row under an assistant message."""
     rating_key = f"rating_{msg_index}"
 
     if rating_key in st.session_state:
@@ -591,16 +582,10 @@ def _render_rating_row(msg_index: int):
     cols = st.columns(11)
     for score in range(11):
         with cols[score]:
-            icon = (
-                "😔" if score <= 3
-                else "😐" if score <= 6
-                else "😊"
-            )
-            label = f"{icon}\n{score}"
-            if st.button(label, key=f"rate_{msg_index}_{score}", use_container_width=True):
+            icon = "😔" if score <= 3 else "😐" if score <= 6 else "😊"
+            if st.button(f"{icon}\n{score}", key=f"rate_{msg_index}_{score}", use_container_width=True):
                 st.session_state[rating_key] = score
                 st.session_state.satisfaction_scores.append(score)
-                # Patch score into last session log entry
                 if st.session_state.session_log:
                     st.session_state.session_log[-1]["satisfaction_score"] = score
                 st.rerun()
