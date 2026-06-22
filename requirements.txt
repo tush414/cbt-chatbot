@@ -1,0 +1,21 @@
+# Core LLM & LangChain
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-community>=0.2.0
+langchain-chroma
+langchain-openai>=0.1.0
+langchain-text-splitters>=0.2.0
+
+# LangGraph
+langgraph>=0.1.0
+
+# Vector store
+chromadb>=0.5.0
+
+# Web loading
+beautifulsoup4>=4.12.0
+
+# Utilities
+pysqlite3-binary
+streamlit
+python-dotenv>=1.0.0
