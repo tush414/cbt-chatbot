@@ -401,58 +401,6 @@ def render_sidebar():
                     build_medical_rag_store(PERSIST_PATH)
                 st.toast("RAG store rebuilt!", icon="✅")
 
-        # ── Session info ────────────────────────────────────────
-        st.divider()
-        st.markdown("### 📊 Session Info")
-
-        st.markdown(f"""
-<div class="info-card">
-  <b>Session</b> #{st.session_state.session_number} &nbsp;|&nbsp;
-  <b>Turns</b>: {st.session_state.turn_number}
-</div>
-""", unsafe_allow_html=True)
-
-        if st.session_state.homework and st.session_state.homework != "None assigned yet":
-            st.markdown("**📝 Current Homework**")
-            st.markdown(f"""
-<div class="info-card">
-{st.session_state.homework}
-</div>
-""", unsafe_allow_html=True)
-
-        # ── Mood history ────────────────────────────────────────
-        if st.session_state.mood_history:
-            st.markdown("**😊 Mood History**")
-            mood_html = " ".join(
-                f'<span class="mood-chip">{MOOD_EMOJI.get(m, "❓")} {m}</span>'
-                for m in st.session_state.mood_history[-8:]
-            )
-            st.markdown(mood_html, unsafe_allow_html=True)
-
-        # ── Technique history ───────────────────────────────────
-        if st.session_state.technique_history:
-            st.markdown("**🛠 Techniques Used**")
-            unique_techs = list(dict.fromkeys(st.session_state.technique_history))
-            for t in unique_techs:
-                st.markdown(f"- {TECHNIQUE_DESCRIPTIONS.get(t, t)}")
-
-        # ── Satisfaction scores ─────────────────────────────────
-        if st.session_state.satisfaction_scores:
-            avg = sum(st.session_state.satisfaction_scores) / len(st.session_state.satisfaction_scores)
-            st.markdown(f"**⭐ Avg Satisfaction**: {avg:.1f}/10")
-
-        # ── Active technique indicator ──────────────────────────
-        if st.session_state.active_technique:
-            steps   = TECHNIQUE_STEPS[st.session_state.active_technique]
-            current = st.session_state.active_step_index
-            name    = TECHNIQUE_DESCRIPTIONS.get(st.session_state.active_technique, st.session_state.active_technique)
-            st.markdown(f"""
-<div class="technique-active">
-  🟢 <b>Active:</b> {name}<br>
-  Step {current + 1} of {len(steps)}
-</div>
-""", unsafe_allow_html=True)
-
         # ── Reset ───────────────────────────────────────────────
         st.divider()
         if st.button("🔁 New Session", use_container_width=True, type="secondary"):
