@@ -248,6 +248,10 @@ def init_session():
         "technique_history":   [],
         "show_welcome":        True,
         "pending_rating":      False,
+        "needs_human_connection": True,
+        "awaiting_technique": False,
+        "session_rating": None,
+        "show_session_rating": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -318,6 +322,9 @@ def run_chat_turn(user_message: str) -> str:
         "active_technique":    st.session_state.active_technique,
         "active_step_index":   st.session_state.active_step_index,
         "step_answers":        st.session_state.step_answers.copy(),
+        "needs_human_connection": st.session_state.needs_human_connection,
+        "awaiting_technique":     st.session_state.awaiting_technique,
+        
     }
 
     final_state = graph.invoke(initial_state)
@@ -331,6 +338,8 @@ def run_chat_turn(user_message: str) -> str:
     st.session_state.active_technique  = final_state.get("active_technique",  "")
     st.session_state.active_step_index = final_state.get("active_step_index", 0)
     st.session_state.step_answers      = final_state.get("step_answers",      [])
+    st.session_state.needs_human_connection = final_state.get("needs_human_connection", False)
+    st.session_state.awaiting_technique     = final_state.get("awaiting_technique", False)
 
     detected_mood = final_state.get("mood", "neutral")
     if detected_mood:
@@ -403,17 +412,20 @@ def render_sidebar():
 
         # ── Reset ───────────────────────────────────────────────
         st.divider()
+        # if st.button("🔁 New Session", use_container_width=True, type="secondary"):
+        #     keys_to_clear = [
+        #         "chat_history", "session_log", "homework", "turn_number",
+        #         "active_technique", "active_step_index", "step_answers",
+        #         "satisfaction_scores", "mood_history", "technique_history",
+        #         "show_welcome",
+        #     ]
+        #     for k in keys_to_clear:
+        #         if k in st.session_state:
+        #             del st.session_state[k]
+        #     st.session_state.session_number += 1
+        #     st.rerun()
         if st.button("🔁 New Session", use_container_width=True, type="secondary"):
-            keys_to_clear = [
-                "chat_history", "session_log", "homework", "turn_number",
-                "active_technique", "active_step_index", "step_answers",
-                "satisfaction_scores", "mood_history", "technique_history",
-                "show_welcome",
-            ]
-            for k in keys_to_clear:
-                if k in st.session_state:
-                    del st.session_state[k]
-            st.session_state.session_number += 1
+            st.session_state.show_session_rating = True
             st.rerun()
 
         # ── Disclaimer ──────────────────────────────────────────
@@ -438,8 +450,47 @@ def main():
         "*Evidence-based Cognitive Behavioural Therapy support — "
         "multi-turn, technique-guided, RAG-enhanced*"
     )
-    st.divider()
+    # st.divider()
+    if st.session_state.show_session_rating:
+        st.markdown("### How was this session overall?")
+        cols = st.columns(11)
+        for score in range(11):
+            with cols[score]:
+                icon = "😔" if score <= 3 else "😐" if score <= 6 else "😊"
+                if st.button(f"{icon}\n{score}", key=f"session_rate_{score}", use_container_width=True):
+                    st.session_state.session_rating = score
+                    st.session_state.show_session_rating = False
+                    # Now clear the session
+                    keys_to_clear = [
+                        "chat_history", "session_log", "homework", "turn_number",
+                        "active_technique", "active_step_index", "step_answers",
+                        "satisfaction_scores", "mood_history", "technique_history",
+                        "show_welcome", "needs_human_connection", "awaiting_technique",
+                    ]
+                    for k in keys_to_clear:
+                        if k in st.session_state:
+                            del st.session_state[k]
+                    st.session_state.session_number += 1
+                    st.toast(f"Thanks! You rated this session {score}/10 ⭐", icon="✅")
+                    st.rerun()
 
+        if st.button("Skip", key="skip_session_rating"):
+            st.session_state.show_session_rating = False
+            keys_to_clear = [
+                "chat_history", "session_log", "homework", "turn_number",
+                "active_technique", "active_step_index", "step_answers",
+                "satisfaction_scores", "mood_history", "technique_history",
+                "show_welcome", "needs_human_connection", "awaiting_technique",
+            ]
+            for k in keys_to_clear:
+                if k in st.session_state:
+                    del st.session_state[k]
+            st.session_state.session_number += 1
+            st.rerun()
+        st.divider()
+        return
+    
+    st.divider()
     # ── RAG startup (runs once, cached) ────────────────────────
     if not st.session_state.rag_loaded:
         with st.spinner("🔄 Loading RAG knowledge stores…"):
@@ -478,8 +529,8 @@ def main():
                 and i == len(st.session_state.chat_history) - 1
                 and not st.session_state.active_technique
             )
-            if is_last_assistant:
-                _render_rating_row(i)
+            # if is_last_assistant:
+            #     _render_rating_row(i)
 
     # ── Active technique step badge ─────────────────────────────
     if st.session_state.active_technique:
@@ -508,8 +559,8 @@ def main():
                 response = run_chat_turn(user_input)
             st.markdown(response)
 
-            if not st.session_state.active_technique:
-                _render_rating_row(len(st.session_state.chat_history) - 1)
+            # if not st.session_state.active_technique:
+            #     _render_rating_row(len(st.session_state.chat_history) - 1)
 
         st.rerun()
 

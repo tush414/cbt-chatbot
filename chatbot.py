@@ -16,8 +16,8 @@
 #             ↓                                                 #
 #        [rag_retriever]                                        #
 #             ↓                                                 #
-#        [cbt_response_generator]  ← starts technique if       #
-#             ↓                       interactive               #
+#        [cbt_response_generator]  ← Phase 1: human connection #
+#             ↓                      Phase 2: starts technique  #
 #        [session_tracker] → END                                #
 ##################################################################
 
@@ -46,7 +46,8 @@ RETRIEVAL_STRATEGY: str = "similarity"
 
 LLM_MODEL: str = "gpt-4o-mini"
 
-LLM = ChatOpenAI(model=LLM_MODEL, temperature=0.4)
+LLM = ChatOpenAI(model=LLM_MODEL, temperature=0.5)
+
 
 # ──────────────────────────────────────────────────────────────
 #  Crisis response
@@ -515,24 +516,27 @@ SINGLE_TURN_TECHNIQUES = {
 #  Shared LangGraph State
 # ══════════════════════════════════════════════════════════════
 class CBTState(TypedDict):
-    user_query:            str
-    crisis_detected:       bool
-    mood:                  str
-    selected_technique:    str
-    technique_rationale:   str
-    medical_context:       list[str]
-    cbt_context:           list[str]
-    final_response:        str
-    session_log:           list[dict]
-    session_number:        int
-    turn_number:           int
-    homework:              str
-    chat_history:          list[dict]
-    satisfaction_score:    int           # 0–10, -1 = skipped
+    user_query:               str
+    crisis_detected:          bool
+    mood:                     str
+    selected_technique:       str
+    technique_rationale:      str
+    medical_context:          list[str]
+    cbt_context:              list[str]
+    final_response:           str
+    session_log:              list[dict]
+    session_number:           int
+    turn_number:              int
+    homework:                 str
+    chat_history:             list[dict]
+    satisfaction_score:       int           # 0–10, -1 = skipped
     # Interactive technique state
-    active_technique:      str           # technique currently mid-execution
-    active_step_index:     int           # which step we're on
-    step_answers:          list[dict]    # collected user answers per step
+    active_technique:         str           # technique currently mid-execution
+    active_step_index:        int           # which step we're on
+    step_answers:             list[dict]    # collected user answers per step
+    # Human connection phase
+    needs_human_connection:   bool          # True → empathy only, no technique yet
+    awaiting_technique:       bool          # True → technique selected, waiting to start
 
 
 # ══════════════════════════════════════════════════════════════
@@ -723,7 +727,10 @@ MOOD_EMPATHY_PROFILES = {
         ),
         "avoid": (
             "Never say 'just relax', 'don't worry', 'it's not a big deal', or rush to solutions "
-            "before they feel heard. Do not be peppy or artificially upbeat — it feels dismissive."
+            "before they feel heard. Do not be peppy or artificially upbeat — it feels dismissive. "
+            "Never use hollow phrases like 'I hear you', 'that sounds challenging', "
+            "'it's completely okay to feel this way', 'it's completely understandable'. "
+            "These feel robotic. Speak to THIS person's specific experience."
         ),
         "depth_note": (
             "Anxiety often contains a specific feared story — name it if you can detect it "
@@ -752,7 +759,9 @@ MOOD_EMPATHY_PROFILES = {
         "avoid": (
             "Never say 'cheer up', 'think positive', 'others have it worse', "
             "or imply they should feel better by now. Do not give long lists — "
-            "it feels overwhelming. Do not be relentlessly upbeat."
+            "it feels overwhelming. Do not be relentlessly upbeat. "
+            "Never use hollow phrases like 'I hear you', 'that sounds challenging', "
+            "'it's completely okay to feel this way'. These feel scripted and dismissive."
         ),
         "depth_note": (
             "Depression often involves a harsh inner critic. If you detect self-criticism or "
@@ -780,7 +789,8 @@ MOOD_EMPATHY_PROFILES = {
         "avoid": (
             "Never tell them to calm down, take a breath first, or 'look at it from the other side' "
             "before the anger has been fully validated. Do not be passive or mealy-mouthed — "
-            "match the directness of their emotion."
+            "match the directness of their emotion. Never use hollow phrases like 'I hear you', "
+            "'that sounds challenging', 'it's completely understandable to feel this way'."
         ),
         "depth_note": (
             "Anger is often a secondary emotion covering hurt or fear. If you sense this in their "
@@ -810,7 +820,9 @@ MOOD_EMPATHY_PROFILES = {
             "Do not give long lists of advice — it adds to the overwhelm. "
             "Do not be overly philosophical or abstract. "
             "Do not minimise by saying 'just take it one day at a time' without "
-            "actually helping them identify what that one thing is."
+            "actually helping them identify what that one thing is. "
+            "Never use hollow phrases like 'I hear you', 'that sounds challenging', "
+            "'it's completely okay to feel overwhelmed'."
         ),
         "depth_note": (
             "Overwhelm often comes from a combination of too many tasks AND the belief "
@@ -839,7 +851,8 @@ MOOD_EMPATHY_PROFILES = {
         "avoid": (
             "Never say 'everything happens for a reason', 'they're in a better place', "
             "'at least…', 'you need to move on', or rush toward acceptance or silver linings. "
-            "Do not problem-solve. Do not be cheerful."
+            "Do not problem-solve. Do not be cheerful. Never use hollow phrases like "
+            "'I hear you', 'that sounds really difficult', 'it's understandable to feel this way'."
         ),
         "depth_note": (
             "Grief is not only about death — it includes loss of relationships, identity, "
@@ -856,7 +869,7 @@ MOOD_EMPATHY_PROFILES = {
             "Make them feel truly met right now, in this exchange."
         ),
         "language": (
-            "Use connecting language that closes distance: 'I hear you', 'what you're describing "
+            "Use connecting language that closes distance: 'what you're describing "
             "makes complete sense', 'you're not invisible here'. Gently normalise loneliness as "
             "a universal human experience without minimising their specific pain."
         ),
@@ -868,7 +881,9 @@ MOOD_EMPATHY_PROFILES = {
         "avoid": (
             "Do not immediately suggest 'just reach out to someone' — they may have tried and "
             "it didn't work, which deepens the pain. Do not be clinical or distant. "
-            "Do not minimise by saying 'everyone feels lonely sometimes'."
+            "Do not minimise by saying 'everyone feels lonely sometimes'. "
+            "Never use hollow phrases like 'I hear you', 'that sounds challenging', "
+            "'it's completely okay to feel lonely'."
         ),
         "depth_note": (
             "Loneliness is often accompanied by a belief that one is fundamentally unlikeable "
@@ -896,7 +911,8 @@ MOOD_EMPATHY_PROFILES = {
         "avoid": (
             "Do not dampen optimism with excessive caution or caveats. "
             "Do not be patronising or treat their hope as naive. "
-            "Do not immediately introduce problems or challenges."
+            "Do not immediately introduce problems or challenges. "
+            "Never use hollow phrases like 'I hear you', 'that's wonderful'."
         ),
         "depth_note": (
             "Hope is fragile — it can tip into pressure ('now I have to follow through'). "
@@ -925,7 +941,8 @@ MOOD_EMPATHY_PROFILES = {
         "avoid": (
             "Do not overwhelm with information or multiple frameworks at once. "
             "Do not make them feel foolish for being confused. "
-            "Do not be abstract or philosophical when they need practical clarity."
+            "Do not be abstract or philosophical when they need practical clarity. "
+            "Never use hollow phrases like 'I hear you', 'that sounds confusing'."
         ),
         "depth_note": (
             "Confusion can sometimes be a defence against a difficult decision or feeling "
@@ -951,7 +968,8 @@ MOOD_EMPATHY_PROFILES = {
         ),
         "avoid": (
             "Do not be cold, robotic, or purely clinical. "
-            "Do not assume everything is fine just because the tone is neutral."
+            "Do not assume everything is fine just because the tone is neutral. "
+            "Never use hollow phrases like 'I hear you', 'that's a great question'."
         ),
         "depth_note": (
             "Neutral queries can sometimes be a way of approaching something harder indirectly. "
@@ -976,9 +994,123 @@ TECHNIQUE_HOMEWORK = {
 
 
 # ══════════════════════════════════════════════════════════════
+#  HUMAN CONNECTION PROMPT
+#  Phase 1: Pure empathy before any technique is introduced.
+#  Goal: Make the user feel like they're talking to a real person.
+# ══════════════════════════════════════════════════════════════
+HUMAN_CONNECTION_PROMPT = """\
+You are a warm, deeply empathic human therapist having a real conversation.
+You are NOT a chatbot. Do not sound clinical, structured, or robotic.
+
+═══ MOOD & EMPATHY ═══════════════════════════════════════════
+Mood detected  : {mood}
+Tone           : {tone}
+What they need : {what_they_need}
+Depth note     : {depth_note}
+Avoid          : {avoid}
+══════════════════════════════════════════════════════════════
+
+═══ CONVERSATION HISTORY ═════════════════════════════════════
+{history}
+══════════════════════════════════════════════════════════════
+
+═══ WHAT THE USER SAID ═══════════════════════════════════════
+{query}
+══════════════════════════════════════════════════════════════
+
+Your ONLY job right now is to make this person feel genuinely heard —
+like they're talking to a real human who actually cares about THEM specifically.
+
+Write a response that:
+1. Reflects back the SPECIFIC emotion or situation they described.
+   Not generic validation ("that sounds hard") but something that shows
+   you heard THIS person. If they said "I am anxious", don't say
+   "anxiety can feel overwhelming" — ask what's making them anxious.
+   If they gave details, reflect those details back with precision and warmth.
+2. Gently invites them to share MORE with ONE specific, open question.
+   Not "how does that make you feel?" — something real and curious:
+   "How long have you been carrying this?"
+   "What's the part that feels the heaviest right now?"
+   "Has something happened recently that brought this on?"
+   "Is this something that's been building for a while, or did something trigger it today?"
+3. Lets them know you're here and not in a rush.
+
+STRICT RULES — violating these makes the response feel fake:
+- Do NOT mention CBT, therapy techniques, exercises, or tools of any kind.
+- Do NOT introduce any structure, steps, or numbered lists.
+- Do NOT give advice or solutions.
+- Do NOT use these hollow, scripted phrases (they instantly break trust):
+    "I hear you"
+    "that sounds challenging" / "that sounds really hard"
+    "it's completely okay to feel this way"
+    "it's completely understandable"
+    "it's normal to feel anxious/sad/angry"
+    "I can sense how you feel"
+    "I'm here for you"
+    "thank you for sharing"
+    "you're not alone"
+    "that must be really difficult"
+- Write like a warm, curious human — flowing sentences, conversational.
+- Maximum 4-5 sentences total. Short, present, human.
+- If their message is vague (e.g. just "I am anxious" with no detail),
+  your ENTIRE job is to gently draw out what's underneath.
+  Do not fill in the blanks for them. Ask.
+"""
+
+
+# ══════════════════════════════════════════════════════════════
+#  TECHNIQUE BRIDGE PROMPT
+#  Phase 2: After user has shared more, introduce the technique
+#  naturally as a next step — not abruptly.
+# ══════════════════════════════════════════════════════════════
+TECHNIQUE_BRIDGE_PROMPT = """\
+You are a compassionate CBT therapist continuing a real conversation.
+
+═══ MOOD & EMPATHY ═══════════════════════════════════════════
+Mood           : {mood}
+Tone to adopt  : {tone}
+Opening posture: {opening}
+Language guide : {language}
+Avoid          : {avoid}
+══════════════════════════════════════════════════════════════
+
+═══ CBT KNOWLEDGE ════════════════════════════════════════════
+{cbt_context}
+══════════════════════════════════════════════════════════════
+
+═══ CONVERSATION SO FAR ══════════════════════════════════════
+{history}
+══════════════════════════════════════════════════════════════
+
+═══ USER'S LATEST MESSAGE ════════════════════════════════════
+{query}
+══════════════════════════════════════════════════════════════
+
+The user has now shared more about what they're going through.
+Write a response that:
+1. Briefly (1–2 sentences) acknowledges what they just shared —
+   something specific and warm, not generic.
+2. Transitions naturally into the technique by explaining in ONE
+   plain human sentence why this particular approach fits what
+   THEY described — connect it to their actual words.
+   Technique: "{technique_name}"
+   Rationale: {technique_rationale}
+3. Then seamlessly deliver the first step below:
+
+{first_step}
+
+Do NOT add anything after the first step prompt.
+Do NOT include homework yet.
+Do NOT use hollow phrases.
+Keep the tone human and warm throughout.
+"""
+
+
+# ══════════════════════════════════════════════════════════════
 #  NODE 5 — CBT Response Generator
-#  (handles both opening of interactive techniques and
-#   single-turn technique delivery)
+#  Phase 1: human connection (needs_human_connection = True)
+#  Phase 2: technique introduction (awaiting_technique = True)
+#  Phase 3: single-turn technique delivery
 # ══════════════════════════════════════════════════════════════
 OPENING_PROMPT = """\
 You are a compassionate CBT therapist chatbot.
@@ -1048,7 +1180,10 @@ Avoid   : {avoid}
 ══════════════════════════════════════════════════════════════
 
 Structure your response:
-1. EMPATHIC VALIDATION (3–4 sentences) — reflect their specific situation back
+1. EMPATHIC VALIDATION (3–4 sentences) — reflect their specific situation back.
+   No hollow phrases. No "I hear you", "that sounds challenging",
+   "it's completely okay to feel this way", "it's understandable".
+   Be specific to what THEY said.
 2. NORMALISATION (1–2 sentences)
 3. CBT TECHNIQUE — deliver the full technique step by step
 4. HOMEWORK — use exactly this task:
@@ -1068,10 +1203,85 @@ def cbt_response_generator_node(state: CBTState) -> CBTState:
     cbt_ctx   = "\n\n---\n\n".join(state.get("cbt_context", [])) or "No CBT context retrieved."
     med_ctx   = "\n\n---\n\n".join(state.get("medical_context", [])) or "No medical context retrieved."
 
+    history_text = "\n".join(
+        f"{m['role'].capitalize()}: {m['content']}"
+        for m in state.get("chat_history", [])[-6:]
+    ) or "First message."
+
+    new_state = dict(state)
+
+    # ── PHASE 1: Pure human connection — no technique yet ─────
+    if state.get("needs_human_connection", False):
+        prompt = HUMAN_CONNECTION_PROMPT.format(
+            mood           = mood,
+            tone           = empathy["tone"],
+            what_they_need = empathy["what_they_need"],
+            depth_note     = empathy["depth_note"],
+            avoid          = empathy["avoid"],
+            history        = history_text,
+            query          = state["user_query"],
+        )
+        response = LLM.invoke([HumanMessage(content=prompt)])
+        new_state["final_response"]         = response.content
+        new_state["needs_human_connection"] = False
+        new_state["awaiting_technique"]     = True   # next turn → start technique
+        print("[ResponseGenerator] Phase 1: Human connection")
+        return new_state
+
+    # ── PHASE 2: Introduce technique after user has shared more ─
+    if state.get("awaiting_technique", False):
+        is_interactive = technique in TECHNIQUE_STEPS
+
+        if is_interactive:
+            steps      = TECHNIQUE_STEPS[technique]
+            first_step = steps[0]["prompt"]
+
+            prompt = TECHNIQUE_BRIDGE_PROMPT.format(
+                mood               = mood,
+                tone               = empathy["tone"],
+                opening            = empathy["opening"],
+                language           = empathy["language"],
+                avoid              = empathy["avoid"],
+                cbt_context        = cbt_ctx,
+                history            = history_text,
+                query              = state["user_query"],
+                technique_name     = TECHNIQUE_DESCRIPTIONS.get(technique, technique),
+                technique_rationale= state.get("technique_rationale", ""),
+                first_step         = first_step,
+            )
+            new_state["active_technique"]  = technique
+            new_state["active_step_index"] = 0
+            new_state["step_answers"]      = []
+        else:
+            # Single-turn technique — bridge into it directly
+            prompt = SINGLE_TURN_PROMPT.format(
+                session_number      = state.get("session_number", 1),
+                turn_number         = state.get("turn_number", 1),
+                mood                = mood,
+                technique           = TECHNIQUE_DESCRIPTIONS.get(technique, technique),
+                technique_rationale = state.get("technique_rationale", ""),
+                homework            = state.get("homework", "None assigned yet"),
+                tone                = empathy["tone"],
+                opening             = empathy["opening"],
+                language            = empathy["language"],
+                avoid               = empathy["avoid"],
+                cbt_context         = cbt_ctx,
+                medical_context     = med_ctx,
+                history             = history_text,
+                query               = state["user_query"],
+                technique_homework  = TECHNIQUE_HOMEWORK.get(technique, "Reflect on today's session for 10 minutes."),
+            )
+
+        response = LLM.invoke([HumanMessage(content=prompt)])
+        new_state["final_response"]     = response.content
+        new_state["awaiting_technique"] = False
+        print("[ResponseGenerator] Phase 2: Technique bridge")
+        return new_state
+
+    # ── PHASE 3: Standard flow (returning users / subsequent turns) ─
     is_interactive = technique in TECHNIQUE_STEPS
 
     if is_interactive:
-        # Deliver opening + first step prompt
         steps      = TECHNIQUE_STEPS[technique]
         first_step = steps[0]["prompt"]
 
@@ -1086,18 +1296,11 @@ def cbt_response_generator_node(state: CBTState) -> CBTState:
             technique_name = TECHNIQUE_DESCRIPTIONS.get(technique, technique),
             first_step     = first_step,
         )
-        new_state = dict(state)
         new_state["active_technique"]  = technique
         new_state["active_step_index"] = 0
         new_state["step_answers"]      = []
 
     else:
-        # Single-turn delivery
-        history_text = "\n".join(
-            f"{m['role'].capitalize()}: {m['content']}"
-            for m in state.get("chat_history", [])[-8:]
-        ) or "First message."
-
         prompt = SINGLE_TURN_PROMPT.format(
             session_number      = state.get("session_number", 1),
             turn_number         = state.get("turn_number", 1),
@@ -1115,17 +1318,15 @@ def cbt_response_generator_node(state: CBTState) -> CBTState:
             query               = state["user_query"],
             technique_homework  = TECHNIQUE_HOMEWORK.get(technique, "Reflect on today's session for 10 minutes."),
         )
-        new_state = dict(state)
 
     response = LLM.invoke([HumanMessage(content=prompt)])
     new_state["final_response"] = response.content
+    print("[ResponseGenerator] Phase 3: Standard flow")
     return new_state
 
 
 # ══════════════════════════════════════════════════════════════
 #  NODE — Interactive Technique Step Handler
-#  Called instead of the full pipeline when a technique is
-#  already mid-execution.
 # ══════════════════════════════════════════════════════════════
 STEP_REFLECT_PROMPT = """\
 You are a warm CBT therapist guiding a user through {technique_name}.
@@ -1164,17 +1365,11 @@ for deeper, personalised support.
 
 
 def technique_step_node(state: CBTState) -> CBTState:
-    """
-    Handles one user turn while a technique is mid-execution.
-    Advances the step index, reflects on the user's answer,
-    and either prompts the next step or closes the technique.
-    """
     technique   = state["active_technique"]
     step_index  = state["active_step_index"]
     steps       = TECHNIQUE_STEPS[technique]
     user_answer = state["user_query"]
 
-    # Record this answer
     answers = state.get("step_answers", [])
     answers = answers + [{
         "step"  : steps[step_index]["label"],
@@ -1186,7 +1381,6 @@ def technique_step_node(state: CBTState) -> CBTState:
     new_state  = dict(state)
 
     if is_last:
-        # Build closing reflection
         all_answers_text = "\n".join(
             f"  [{a['step']}]: {a['answer']}" for a in answers
         )
@@ -1197,7 +1391,7 @@ def technique_step_node(state: CBTState) -> CBTState:
         )
         response = LLM.invoke([HumanMessage(content=closing_prompt)])
         new_state["final_response"]    = response.content
-        new_state["active_technique"]  = ""    # clear — technique complete
+        new_state["active_technique"]  = ""
         new_state["active_step_index"] = 0
         new_state["step_answers"]      = []
         print(f"[TechniqueStep] '{technique}' COMPLETE")
@@ -1205,9 +1399,7 @@ def technique_step_node(state: CBTState) -> CBTState:
     else:
         next_step = steps[next_index]
 
-        # Closing step with its own static prompt
         if next_step.get("is_closing") and next_step["prompt"]:
-            # Static closing prompt (e.g. box breathing final check-in)
             response = LLM.invoke([HumanMessage(content=
                 f"You are a warm CBT therapist. The user just completed a step "
                 f"in {TECHNIQUE_DESCRIPTIONS.get(technique, technique)}.\n"
@@ -1216,7 +1408,6 @@ def technique_step_node(state: CBTState) -> CBTState:
                 f"{next_step['prompt']}"
             )])
         elif steps[step_index].get("reflect"):
-            # Reflect on current answer and transition to next step
             reflect_prompt = STEP_REFLECT_PROMPT.format(
                 technique_name   = TECHNIQUE_DESCRIPTIONS.get(technique, technique),
                 step_label       = steps[step_index]["label"],
@@ -1225,7 +1416,6 @@ def technique_step_node(state: CBTState) -> CBTState:
             )
             response = LLM.invoke([HumanMessage(content=reflect_prompt)])
         else:
-            # No reflection — just show next step
             response = LLM.invoke([HumanMessage(content=
                 f"You are a warm CBT therapist. Briefly acknowledge the user "
                 f"completed the last step (1 sentence), then deliver:\n\n"
@@ -1283,7 +1473,6 @@ def session_tracker_node(state: CBTState) -> CBTState:
 #  Graph Builder
 # ══════════════════════════════════════════════════════════════
 def _entry_router(state: CBTState) -> Literal["technique_step", "crisis_detection"]:
-    """Route to interactive step handler if a technique is mid-execution."""
     if state.get("active_technique"):
         return "technique_step"
     return "crisis_detection"
@@ -1295,8 +1484,7 @@ def build_cbt_graph(medical_store: Chroma, cbt_store: Chroma):
 
     graph = StateGraph(CBTState)
 
-    # Add all nodes
-    graph.add_node("entry_router",           lambda s: s)   # pass-through router node
+    graph.add_node("entry_router",           lambda s: s)
     graph.add_node("technique_step",         technique_step_node)
     graph.add_node("crisis_detection",       crisis_detection_node)
     graph.add_node("mood_detector",          mood_detector_node)
@@ -1305,7 +1493,6 @@ def build_cbt_graph(medical_store: Chroma, cbt_store: Chroma):
     graph.add_node("cbt_response_generator", cbt_response_generator_node)
     graph.add_node("session_tracker",        session_tracker_node)
 
-    # Entry point routes based on whether a technique is active
     graph.set_entry_point("entry_router")
     graph.add_conditional_edges(
         "entry_router",
@@ -1316,10 +1503,8 @@ def build_cbt_graph(medical_store: Chroma, cbt_store: Chroma):
         },
     )
 
-    # Interactive technique path
     graph.add_edge("technique_step", "session_tracker")
 
-    # Normal pipeline path
     graph.add_conditional_edges(
         "crisis_detection", crisis_router,
         {"__end__": END, "mood_detector": "mood_detector"},
@@ -1349,33 +1534,39 @@ class CBTChatSession:
         self.session_number      : int  = session_number
         self.turn_number         : int  = 0
         self.satisfaction_scores : list[int] = []
-        # Interactive technique state (persisted across turns)
+        # Interactive technique state
         self.active_technique    : str  = ""
         self.active_step_index   : int  = 0
         self.step_answers        : list[dict] = []
+        # Human connection phase flags
+        self.needs_human_connection : bool = True   # Always start with human connection
+        self.awaiting_technique     : bool = False  # Technique selected, not yet started
 
     def chat(self, user_message: str) -> str:
         self.turn_number += 1
 
         initial_state: CBTState = {
-            "user_query":           user_message,
-            "crisis_detected":      False,
-            "mood":                 "neutral",
-            "selected_technique":   "",
-            "technique_rationale":  "",
-            "medical_context":      [],
-            "cbt_context":          [],
-            "final_response":       "",
-            "session_log":          self.session_log.copy(),
-            "session_number":       self.session_number,
-            "turn_number":          self.turn_number,
-            "homework":             self.homework,
-            "chat_history":         self.chat_history.copy(),
-            "satisfaction_score":   -1,
-            # Pass interactive technique state into graph
-            "active_technique":     self.active_technique,
-            "active_step_index":    self.active_step_index,
-            "step_answers":         self.step_answers.copy(),
+            "user_query":             user_message,
+            "crisis_detected":        False,
+            "mood":                   "neutral",
+            "selected_technique":     "",
+            "technique_rationale":    "",
+            "medical_context":        [],
+            "cbt_context":            [],
+            "final_response":         "",
+            "session_log":            self.session_log.copy(),
+            "session_number":         self.session_number,
+            "turn_number":            self.turn_number,
+            "homework":               self.homework,
+            "chat_history":           self.chat_history.copy(),
+            "satisfaction_score":     -1,
+            # Interactive technique state
+            "active_technique":       self.active_technique,
+            "active_step_index":      self.active_step_index,
+            "step_answers":           self.step_answers.copy(),
+            # Human connection phase
+            "needs_human_connection": self.needs_human_connection,
+            "awaiting_technique":     self.awaiting_technique,
         }
 
         final_state = self.graph.invoke(initial_state)
@@ -1385,10 +1576,13 @@ class CBTChatSession:
         self.chat_history.append({"role": "assistant",  "content": response})
         self.session_log       = final_state.get("session_log",       self.session_log)
         self.homework          = final_state.get("homework",          self.homework)
-        # Persist interactive technique state for next turn
+        # Persist interactive technique state
         self.active_technique  = final_state.get("active_technique",  "")
         self.active_step_index = final_state.get("active_step_index", 0)
         self.step_answers      = final_state.get("step_answers",      [])
+        # Persist human connection phase flags
+        self.needs_human_connection = final_state.get("needs_human_connection", False)
+        self.awaiting_technique     = final_state.get("awaiting_technique",     False)
 
         return response
 
@@ -1461,7 +1655,6 @@ if __name__ == "__main__":
 
     while True:
         try:
-            # Show step indicator if inside an interactive technique
             if session.active_technique:
                 steps      = TECHNIQUE_STEPS[session.active_technique]
                 step_label = steps[session.active_step_index]["label"]
@@ -1498,9 +1691,8 @@ if __name__ == "__main__":
         response = session.chat(user_input)
         print(f"\nBot:\n{response}\n")
 
-        # Satisfaction feedback — only ask when technique is NOT mid-step
-        # (avoids interrupting the exercise flow)
-        if not session.active_technique:
+        # Satisfaction feedback — skip during technique steps and connection phase
+        if not session.active_technique and not session.needs_human_connection and not session.awaiting_technique:
             print("─" * 45)
             print("  How satisfied are you with this response?")
             print("  0 = Not helpful   10 = Extremely helpful")
